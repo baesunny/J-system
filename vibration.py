@@ -207,7 +207,28 @@ if __name__ == "__main__":
             insert_vibration_data(13, vib_sp["x_axis"], filtered_x_vib_sp, upper_limit_vib_x, lower_limit_vib_x, outlier_status_vib_x)
             insert_vibration_data(14, vib_sp["y_axis"], filtered_y_vib_sp, upper_limit_vib_y, lower_limit_vib_y, outlier_status_vib_y)
             insert_vibration_data(15, vib_sp["z_axis"], filtered_z_vib_sp, upper_limit_vib_z, lower_limit_vib_z, outlier_status_vib_z)
-            
+
+            # 리스트에 데이터 추가
+            vibration_data_list = [
+                create_vibration_data(7, datetime.now(), axis_acc["x_axis"], upper_limit_x, lower_limit_x, outlier_status_x, filtered_x_acc),
+                create_vibration_data(8, datetime.now(), axis_acc["y_axis"], upper_limit_y, lower_limit_y, outlier_status_y, filtered_y_acc),
+                create_vibration_data(9, datetime.now(), axis_acc["z_axis"], upper_limit_z, lower_limit_z, outlier_status_z, filtered_z_acc),
+                
+                create_vibration_data(10, datetime.now(), ang_vel["x_axis"], upper_limit_ang_x, lower_limit_ang_x, outlier_status_ang_x, filtered_x_ang_vel),
+                create_vibration_data(11, datetime.now(), ang_vel["y_axis"], upper_limit_ang_y, lower_limit_ang_y, outlier_status_ang_y, filtered_y_ang_vel),
+                create_vibration_data(12, datetime.now(), ang_vel["z_axis"], upper_limit_ang_z, lower_limit_ang_z, outlier_status_ang_z, filtered_z_ang_vel),
+                
+                create_vibration_data(13, datetime.now(), vib_sp["x_axis"], upper_limit_vib_x, lower_limit_vib_x, outlier_status_vib_x, filtered_x_vib_sp),
+                create_vibration_data(14, datetime.now(), vib_sp["y_axis"], upper_limit_vib_y, lower_limit_vib_y, outlier_status_vib_y, filtered_y_vib_sp),
+                create_vibration_data(15, datetime.now(), vib_sp["z_axis"], upper_limit_vib_z, lower_limit_vib_z, outlier_status_vib_z, filtered_z_vib_sp)
+            ]
+
+            # # 데이터 일괄 삽입
+            # for data in vibration_data_list:
+            #     save_to_redis(client, stream_name, data)
+
+            batch_save_to_redis(client, stream_name, vibration_data_list)
+                
             sleep(0.01)  # 0.01초 대기 (필요에 따라 조정 가능)
 
         except Exception as e:
