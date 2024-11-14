@@ -4,6 +4,12 @@ from time import sleep
 import psycopg2
 import numpy as np
 from collections import deque
+import redis
+from datetime import datetime
+import datetime
+import time  # 이 줄을 코드 상단에 추가하세요.
+from psycopg2.extras import execute_values
+
 
 # PostgreSQL 연결 설정
 conn = psycopg2.connect(
@@ -15,8 +21,14 @@ conn = psycopg2.connect(
 )
 cur = conn.cursor()
 
-port = 'COM5'
+port = 'COM3'
 slave_id = 80
+
+# Redis에 연결
+client = redis.from_url('redis://localhost')
+stream_name = 'sensorDataStream'
+count = 0
+
 
 # 데이터 저장을 위한 큐
 data_queues = {
@@ -92,12 +104,61 @@ def calculate_limits_and_outlier_status(values):
     return upper_limit, lower_limit
 
 
-def insert_vibration_data(sensor_id, value, filtered_value, upper_limit, lower_limit, outlier_status):
+def insert_vibration_data(sensor_id, current_time, value, filtered_value, upper_limit, lower_limit, outlier_status):
     cur.execute("""
         INSERT INTO public.vibration (sensor_id, "time", value, filtered_value, upper_limit, lower_limit, outlier_status)
-        VALUES (%s, NOW(), %s, %s, %s, %s, %s)
-    """, (sensor_id, value, filtered_value, upper_limit, lower_limit, outlier_status))
+        VALUES (%s, %s, %s, %s, %s, %s, %s)
+    """, (sensor_id, current_time, value, filtered_value, upper_limit, lower_limit, outlier_status))
     conn.commit()
+
+def bulk_insert_vibration_data(data_list):
+    query = "INSERT INTO public.vibration(sensor_id, time, value, filtered_value, upper_limit, lower_limit, outlier_status) VALUES %s"
+
+    try:
+        with conn.cursor() as cur:
+            # execute_values를 사용하여 성능을 높이고 다중 레코드를 한 번에 삽입
+            execute_values(cur, query, data_list)
+            conn.commit()
+            print("Bulk insert completed successfully.")
+    except Exception as e:
+        conn.rollback()
+        print(f"An error occurred: {e}")
+    finally:
+        conn.close()
+
+def create_vibration_data_raw(sensor_id, time, axis_data, upper_limit, lower_limit, outlier_status, filtered_value):
+    return {
+        "sensorId": sensor_id,
+        "time": time,
+        "value": axis_data,
+        "upperLimit": upper_limit,
+        "lowerLimit": lower_limit,
+        "outlierStatus": outlier_status,
+        "filteredValue": filtered_value
+}
+
+def create_vibration_data(sensor_id, time, axis_data, upper_limit, lower_limit, outlier_status, filtered_value):
+    return {
+        "sensorId": sensor_id,
+        "time": str(time),
+        "value": axis_data,
+        "upperLimit": upper_limit,
+        "lowerLimit": lower_limit,
+        "outlierStatus": str(outlier_status),
+        "filteredValue": filtered_value
+    }
+
+def save_to_redis(client, stream_name, data):
+    client.xadd(stream_name, data, maxlen="~1000")
+    print(f"Saved data to Redis stream {stream_name}: {data}")
+
+def batch_save_to_redis(client, stream_name, data_list):
+    pipeline = client.pipeline()
+    
+    for data in data_list:
+        pipeline.xadd(stream_name, data)
+    
+    pipeline.execute()
 
 try:
     instrument = minimalmodbus.Instrument(port=port, slaveaddress=slave_id)
@@ -113,6 +174,9 @@ except Exception as e:
 if __name__ == "__main__":
     while True:
         try:
+            # 현재 시간 한 번만 호출
+            current_time = datetime.datetime.now()
+
             # 가속도 데이터 읽기
             acc_data = [
                 instrument.read_register(52, 0, 3, True),
@@ -194,26 +258,56 @@ if __name__ == "__main__":
             upper_limit_vib_z, lower_limit_vib_z = calculate_limits_and_outlier_status(data_queues['filtered_z_vib_sp'])
             outlier_status_vib_z = not (lower_limit_vib_z <= filtered_z_vib_sp <= upper_limit_vib_z)
 
+            # 데이터베이스에 진동 데이터 저장
+            # insert_vibration_data(7, current_time, axis_acc["x_axis"], filtered_x_acc, upper_limit_x, lower_limit_x, outlier_status_x)
+            # insert_vibration_data(8, current_time, axis_acc["y_axis"], filtered_y_acc, upper_limit_y, lower_limit_y, outlier_status_y)
+            # insert_vibration_data(9, current_time, axis_acc["z_axis"], filtered_z_acc, upper_limit_z, lower_limit_z, outlier_status_z)
+            
+            # insert_vibration_data(10, current_time, ang_vel["x_axis"], filtered_x_ang_vel, upper_limit_ang_x, lower_limit_ang_x, outlier_status_ang_x)
+            # insert_vibration_data(11, current_time, ang_vel["y_axis"], filtered_y_ang_vel, upper_limit_ang_y, lower_limit_ang_y, outlier_status_ang_y)
+            # insert_vibration_data(12, current_time, ang_vel["z_axis"], filtered_z_ang_vel, upper_limit_ang_z, lower_limit_ang_z, outlier_status_ang_z)
+
+            # insert_vibration_data(13, current_time, vib_sp["x_axis"], filtered_x_vib_sp, upper_limit_vib_x, lower_limit_vib_x, outlier_status_vib_x)
+            # insert_vibration_data(14, current_time, vib_sp["y_axis"], filtered_y_vib_sp, upper_limit_vib_y, lower_limit_vib_y, outlier_status_vib_y)
+            # insert_vibration_data(15, current_time, vib_sp["z_axis"], filtered_z_vib_sp, upper_limit_vib_z, lower_limit_vib_z, outlier_status_vib_z)
+
+            
+            # 리스트에 데이터 추가
+            raw_vibration_data_list = [
+                create_vibration_data_raw(7, current_time, axis_acc["x_axis"], upper_limit_x, lower_limit_x, outlier_status_x, filtered_x_acc),
+                create_vibration_data_raw(8, current_time, axis_acc["y_axis"], upper_limit_y, lower_limit_y, outlier_status_y, filtered_y_acc),
+                create_vibration_data_raw(9, current_time, axis_acc["z_axis"], upper_limit_z, lower_limit_z, outlier_status_z, filtered_z_acc),
+                
+                create_vibration_data_raw(10, current_time, ang_vel["x_axis"], upper_limit_ang_x, lower_limit_ang_x, outlier_status_ang_x, filtered_x_ang_vel),
+                create_vibration_data_raw(11, current_time, ang_vel["y_axis"], upper_limit_ang_y, lower_limit_ang_y, outlier_status_ang_y, filtered_y_ang_vel),
+                create_vibration_data_raw(12, current_time, ang_vel["z_axis"], upper_limit_ang_z, lower_limit_ang_z, outlier_status_ang_z, filtered_z_ang_vel),
+                
+                create_vibration_data_raw(13, current_time, vib_sp["x_axis"], upper_limit_vib_x, lower_limit_vib_x, outlier_status_vib_x, filtered_x_vib_sp),
+                create_vibration_data_raw(14, current_time, vib_sp["y_axis"], upper_limit_vib_y, lower_limit_vib_y, outlier_status_vib_y, filtered_y_vib_sp),
+                create_vibration_data_raw(15, current_time, vib_sp["z_axis"], upper_limit_vib_z, lower_limit_vib_z, outlier_status_vib_z, filtered_z_vib_sp)
+            ]
 
             # 데이터베이스에 진동 데이터 저장
-            insert_vibration_data(7, axis_acc["x_axis"], filtered_x_acc, upper_limit_x, lower_limit_x, outlier_status_x)
-            insert_vibration_data(8, axis_acc["y_axis"], filtered_y_acc, upper_limit_y, lower_limit_y, outlier_status_y)
-            insert_vibration_data(9, axis_acc["z_axis"], filtered_z_acc, upper_limit_z, lower_limit_z, outlier_status_z)
+            bulk_insert_vibration_data(raw_vibration_data_list)
             
-            insert_vibration_data(10, ang_vel["x_axis"], filtered_x_ang_vel, upper_limit_ang_x, lower_limit_ang_x, outlier_status_ang_x)
-            insert_vibration_data(11, ang_vel["y_axis"], filtered_y_ang_vel, upper_limit_ang_y, lower_limit_ang_y, outlier_status_ang_y)
-            insert_vibration_data(12, ang_vel["z_axis"], filtered_z_ang_vel, upper_limit_ang_z, lower_limit_ang_z, outlier_status_ang_z)
-
-            insert_vibration_data(13, vib_sp["x_axis"], filtered_x_vib_sp, upper_limit_vib_x, lower_limit_vib_x, outlier_status_vib_x)
-            insert_vibration_data(14, vib_sp["y_axis"], filtered_y_vib_sp, upper_limit_vib_y, lower_limit_vib_y, outlier_status_vib_y)
-            insert_vibration_data(15, vib_sp["z_axis"], filtered_z_vib_sp, upper_limit_vib_z, lower_limit_vib_z, outlier_status_vib_z)
+            # 리스트에 데이터 추가
+            vibration_data_list = [
+                create_vibration_data(7, current_time, axis_acc["x_axis"], upper_limit_x, lower_limit_x, outlier_status_x, filtered_x_acc),
+                create_vibration_data(8, current_time, axis_acc["y_axis"], upper_limit_y, lower_limit_y, outlier_status_y, filtered_y_acc),
+                create_vibration_data(9, current_time, axis_acc["z_axis"], upper_limit_z, lower_limit_z, outlier_status_z, filtered_z_acc),
+                
+                create_vibration_data(10, current_time, ang_vel["x_axis"], upper_limit_ang_x, lower_limit_ang_x, outlier_status_ang_x, filtered_x_ang_vel),
+                create_vibration_data(11, current_time, ang_vel["y_axis"], upper_limit_ang_y, lower_limit_ang_y, outlier_status_ang_y, filtered_y_ang_vel),
+                create_vibration_data(12, current_time, ang_vel["z_axis"], upper_limit_ang_z, lower_limit_ang_z, outlier_status_ang_z, filtered_z_ang_vel),
+                
+                create_vibration_data(13, current_time, vib_sp["x_axis"], upper_limit_vib_x, lower_limit_vib_x, outlier_status_vib_x, filtered_x_vib_sp),
+                create_vibration_data(14, current_time, vib_sp["y_axis"], upper_limit_vib_y, lower_limit_vib_y, outlier_status_vib_y, filtered_y_vib_sp),
+                create_vibration_data(15, current_time, vib_sp["z_axis"], upper_limit_vib_z, lower_limit_vib_z, outlier_status_vib_z, filtered_z_vib_sp)
+            ]
             
-            sleep(0.01)  # 0.01초 대기 (필요에 따라 조정 가능)
+            # Redis에 진동 데이터 저장
+            batch_save_to_redis(client, stream_name, vibration_data_list)
 
+            time.sleep(0.5)
         except Exception as e:
-            print(f"데이터 수집 중 오류 발생: {e}")
-
-# # PostgreSQL 연결 종료
-# finally:
-#     cur.close()
-#     conn.close()
+            print(f"Error: {e}")
