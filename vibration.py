@@ -109,8 +109,8 @@ def calculate_limits_and_outlier_status(values):
         mean = prev_mean + (values[-1] - prev_mean) / n
         std = np.sqrt(((n - 1) * (prev_std ** 2) + (values[-1] - prev_mean) * (values[-1] - mean)) / n)
     
-    upper_limit = mean + 4 * std
-    lower_limit = mean - 4 * std
+    upper_limit = mean + 4 * std  ## (기준치 조정) 표준편차 3-4 조정 가능
+    lower_limit = mean - 4 * std  ## (기준치 조정) 표준편차 3-4 조정 가능
     return float(upper_limit), float(lower_limit)
 
 
