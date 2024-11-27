@@ -102,15 +102,17 @@ def calculate_limits_and_outlier_status(values):
         mean = values[-1] if values else 0
         std = 0
     else:
-        prev_mean = values[-2]
-        prev_std = 0 if len(values) == 2 else np.std(values[:-1])
         n = len(values)
+        prev_mean = np.mean(values[:-1])
+        prev_std = np.std(values[:-1])
+
         mean = prev_mean + (values[-1] - prev_mean) / n
         std = np.sqrt(((n - 1) * (prev_std ** 2) + (values[-1] - prev_mean) * (values[-1] - mean)) / n)
     
-    upper_limit = mean + 3 * std
-    lower_limit = mean - 3 * std
-    return upper_limit, lower_limit
+    upper_limit = mean + 4 * std
+    lower_limit = mean - 4 * std
+    return float(upper_limit), float(lower_limit)
+
 
 def insert_vibration_data(sensor_id, current_time, value, filtered_value, upper_limit, lower_limit, outlier_status):
     cur.execute("""
