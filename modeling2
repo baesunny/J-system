@@ -1,3 +1,72 @@
+import pandas as pd
+from sklearn.preprocessing import MinMaxScaler
+import numpy as np
+from sklearn.model_selection import train_test_split
+import tensorflow as tf
+
+# 시간 열을 datetime으로 변환
+data['time'] = pd.to_datetime(data['time'])
+
+# 'time'을 인덱스로 설정
+data = data.set_index('time')
+
+# 필요한 칼럼만 선택
+data = data[['filtered_value', 'outlier_status']]
+
+# 데이터 정규화
+scaler = MinMaxScaler()
+data[['value']] = scaler.fit_transform(data[['filtered_value']])
+
+# 시계열 데이터로 변환
+def create_sequences(df, sequence_length):
+    xs, ys = [], []
+    for i in range(len(df) - sequence_length):
+        x = df.iloc[i:i+sequence_length][['value']].values
+        y = df.iloc[i+sequence_length]['outlier_status']
+        xs.append(x)
+        ys.append(y)
+    return np.array(xs), np.array(ys)
+
+sequence_length = 288  # 모델이 기대하는 시퀀스 길이
+X, y = create_sequences(data, sequence_length)
+
+# 데이터 차원 확인
+print("X shape before reshape:", X.shape)
+
+# 차원 조정 (마지막 차원을 1로 변경)
+X = X[:, :, 0:1]
+
+print("X shape after reshape:", X.shape)
+
+# 훈련 세트와 테스트 세트로 나누기
+X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, shuffle=False)
+
+# 모델 로드
+model = tf.keras.models.load_model("C:\\Users\\Jsystem\\.cache\\huggingface\\hub\\models--keras-io--timeseries-anomaly-detection\\snapshots\\57126012e02dcab3a653501f12cb599c4a51db7a")
+model.summary()
+
+# 모델 컴파일
+model.compile(optimizer='adam', loss='binary_crossentropy', metrics=['accuracy'])
+
+
+# 모델 학습
+history = model.fit(X_train, y_train, epochs=10, batch_size=32, validation_split=0.1)
+
+# 예측
+y_pred = model.predict(X_test)
+
+# 모델 평가
+loss, accuracy = model.evaluate(X_test, y_test)
+print(" ")
+print("==========================")
+print(f"Test Loss: {loss}")
+print(f"Test Accuracy: {accuracy}")
+
+
+
+
+######################################################################################
+
 ## 버전 확인 (hugging face 모델: keras<3.x)
 import tensorflow as tf
 import keras
