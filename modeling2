@@ -1,3 +1,20 @@
+## 버전 확인 (hugging face 모델: keras<3.x)
+import tensorflow as tf
+import keras
+import pandas as pd
+import numpy as np
+from sklearn.model_selection import train_test_split
+from sklearn.preprocessing import MinMaxScaler
+from keras.models import load_model  # 모델 불러오기
+from sklearn.metrics import confusion_matrix, classification_report, accuracy_score
+print(tf.__version__)
+print(keras.__version__)
+
+data = pd.read_csv('./simulation_data.csv')
+data = data.copy()
+data = data[data['sensor_id']==7]
+data
+
 import pandas as pd
 from sklearn.preprocessing import MinMaxScaler
 import numpy as np
