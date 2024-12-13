@@ -1,3 +1,110 @@
+
+import pandas as pd
+import numpy as np
+from sklearn.preprocessing import MinMaxScaler
+from collections import deque
+import tensorflow as tf
+from datetime import datetime
+import psycopg2
+import redis
+
+# 딥러닝 모델 로드
+model = tf.keras.models.load_model("C:\\Users\\Jsystem\\.cache\\huggingface\\hub\\models--keras-io--timeseries-anomaly-detection\\snapshots\\57126012e02dcab3a653501f12cb599c4a51db7a")
+
+
+# 데이터베이스 연결 설정
+conn = psycopg2.connect(
+    dbname="postgres",
+    user="postgres",
+    password="1234",
+    host="localhost",
+    port="5432"
+)
+cursor = conn.cursor()
+
+# Redis 연결 설정
+client = redis.from_url('redis://localhost')
+pipeline = client.pipeline()
+stream_name = 'sensorDataStream'
+
+# 데이터 정규화 스케일러
+scaler = MinMaxScaler()
+
+# 시계열 데이터 큐 초기화 (시퀀스 길이만큼 유지)
+sequence_length = 288
+data_queue = deque(maxlen=sequence_length)
+
+# Redis 및 데이터베이스에 저장 함수
+def save_to_db_and_redis(sensor_id, time, value, prediction, is_outlier):
+    data = (sensor_id, time, value, prediction, is_outlier)
+    
+    # 데이터베이스에 저장
+    try:
+        cursor.execute("""
+            INSERT INTO vibration (sensor_id, time, value, prediction, outlier_status)
+            VALUES (%s, %s, %s, %s, %s)
+        """, data)
+        conn.commit()
+    except Exception as e:
+        print(f"Database insertion error: {e}")
+        conn.rollback()
+
+    # Redis Stream 저장
+    stream_data = {
+        "sensorId": sensor_id,
+        "time": str(time),
+        "value": value,
+        "prediction": prediction,
+        "outlierStatus": str(is_outlier)
+    }
+    pipeline.xadd(stream_name, stream_data, maxlen=2000)
+    pipeline.execute()
+
+# 이상치 탐지 함수
+def detect_outlier_with_model(new_value):
+    # 데이터 정규화 및 큐에 추가
+    normalized_value = scaler.transform([[new_value]])[0][0]
+    data_queue.append(normalized_value)
+    
+    # 시퀀스가 충분히 쌓인 경우
+    if len(data_queue) == sequence_length:
+        input_sequence = np.array(data_queue).reshape(1, sequence_length, 1)
+        prediction = model.predict(input_sequence)[0][0]
+        
+        # 이상치 판단 (임계값 설정 가능)
+        threshold = 0.1
+        is_outlier = abs(new_value - prediction) > threshold
+        return prediction, is_outlier
+    return None, None
+
+# 실시간 데이터 처리
+def process_real_time_data(sensor_id, raw_value):
+    current_time = datetime.now()
+    
+    # 모델 기반 이상치 탐지
+    prediction, is_outlier = detect_outlier_with_model(raw_value)
+    
+    # 결과 저장
+    if prediction is not None:
+        save_to_db_and_redis(sensor_id, current_time, raw_value, prediction, is_outlier)
+
+# 예시: 센서 데이터 처리 루프
+try:
+    while True:
+        # 센서 데이터 수신 (여기서는 임의의 값 사용)
+        sensor_id = 1  # 온도 센서 ID
+        raw_value = np.random.uniform(0, 100)  # 센서에서 수신한 값
+
+        # 데이터 처리
+        process_real_time_data(sensor_id, raw_value)
+
+except KeyboardInterrupt:
+    print("Stopping real-time data processing...")
+    conn.close()
+
+
+###################################################
+
 ## 버전 확인 (hugging face 모델: keras<3.x)
 import tensorflow as tf
 import keras
