@@ -9,6 +9,7 @@ import time
 from datetime import datetime
 import cProfile
 
+
 # PLC 연결 설정
 plc = snap7.client.Client()
 plc.connect("192.168.0.120", 0, 1)
