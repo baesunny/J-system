@@ -7,8 +7,8 @@
 
 #### 2. Modeling.ipynb
 - Hugging Face에 사전 배포된 AutoEncoder 딥러닝 모델을 사용한 이상탐지 basic code
-- https://huggingface.co/keras-io/timeseries-anomaly-detection
-- (모델링 환경) Note: 'keras<3.x' or 'tf_keras' must be installed
+- https://huggingface.co/keras-io/timeseries-anomaly-detection << 모델 배포
+- (환경설정) Note: 'keras<3.x' or 'tf_keras' must be installed
 - 
 
 #### 3. arima_predict.py
