@@ -29,7 +29,7 @@
 
 
 
-3. **IP TIME 아이피타임**
+3. **IPTIME 아이피타임**
    - 공유기로 유명한 EFM 네트웍스에서 만듦.
    - 가성비 good. (낮은 가격에 비해 스펙이 높아 전송 속도가 잘 나옴.)
    - 처음 발매했을 때 중국산 해킹이나 안정성 면에서 문제가 있었으나 펌웨어 업그레이드 개선
@@ -67,12 +67,8 @@
 ---
 
 - **Synology NAS 구매 가이드**
-
   : https://event.synology.com/ko-kr/NASbuyingguide
 
-
-
-![image-20241118105713576](C:\Users\sunny\AppData\Roaming\Typora\typora-user-images\image-20241118105713576.png)
 
 - 최대 2.5Gbps의 네트워크 속도를 지원합니다. 이는 기존 모델보다 약 30% 더 빠른 데이터 처리 속도를 제공
 
@@ -86,7 +82,7 @@
 
   - HDD : Hard Disk Drive 
 
-    - 원형 디스크인 platter가 회전하며 저장된 데이터 처리
+    - 원형 디스크인 platter가 회전하며 저장된 데이터 처리 (LP 돌아가는 원리)
 
   - SSD : Solid State Drive
 
