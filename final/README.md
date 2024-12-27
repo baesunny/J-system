@@ -1,5 +1,7 @@
 ## 코드파일 정리 내역 💻
 
+### 🗂 1. NAS
+
 #### 1. 3sigma.py
 - basic code
 - 실시간으로 수집되는 데이터의 통계적 정보(평균/표준편차)를 기반으로 상한선과 하한선 설정
@@ -18,4 +20,16 @@
 - 계산된 오차가 일정 수준 이상으로 발생할 시, 이상치 데이터로 판별
 - 최신 버전과의 병합 필요
 
-#### 4. 
+
+
+### 🗂 2. Anomaly Detection
+
+- dsfajsdlkf
+  - afdsaf
+  - sadfsdf
+  - asdfasdf
+  - 
+
+### 🗂 3. Data Analysis
+
+- safsdfsdf
