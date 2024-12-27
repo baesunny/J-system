@@ -20,7 +20,7 @@
   - Hugging Face에 사전 배포된 AutoEncoder 딥러닝 모델을 사용한 이상탐지 basic code
   - https://huggingface.co/keras-io/timeseries-anomaly-detection << 모델 배포
   - (환경설정) Note: 'keras<3.x' or 'tf_keras' must be installed
-  - gpu 환경 완비 후에 적용시도?
+  - gpu 환경 완비 후에 적용시도
 
 - arima_predict.py
   - arima 통계기반 모델로 filtered value 다음값 예측
@@ -44,3 +44,5 @@
   - 분석에 사용한 데이터 : 1024_sensor7_3sigma.csv, sample_data.csv
   - 여러 MODEL을 사용한 결과 (시행착오)
   - KALMAN필터 중심의 시각화
+ 
++ AUTOENCODER, TRANSFORMER 파일도 업로드 필요
