@@ -8,19 +8,27 @@
 
 ---
 
-### 🗂 Anomaly Detection
+### 🗂 Anomaly Detection / Modeling
+
+**📍 AutoEncoder_Modeling.ipynb**
+  - Hugging Face에 사전 배포된 AutoEncoder 딥러닝 모델을 사용한 이상탐지 basic code
+  - https://huggingface.co/keras-io/timeseries-anomaly-detection << 모델 배포
+  - (환경설정) Note: 'keras<3.x' or 'tf_keras' must be installed
+  - gpu 환경 완비 후에 적용시도
+
+**📍 LSTM_Modeling.ipynb**
+  - 사용 데이터 : Simulation_data
+  - export한 데이터에 LSTM 기반 예측
+  - gpu 환경 완비 후에 적용시도
+
+---
+### 🗂 Anomaly Detection / real_time
 
 **📍 3sigma.py**
   - Basic code
   - 실시간으로 수집되는 데이터의 통계적 정보(평균/표준편차)를 기반으로 상한선과 하한선 설정
   - 해당 기준 내에 들어오면 정상 데이터, 기준범위를 벗어나면 이상치 데이터로 판별
   - 현재까지 최신 version
-
-**📍 Modeling.ipynb**
-  - Hugging Face에 사전 배포된 AutoEncoder 딥러닝 모델을 사용한 이상탐지 basic code
-  - https://huggingface.co/keras-io/timeseries-anomaly-detection << 모델 배포
-  - (환경설정) Note: 'keras<3.x' or 'tf_keras' must be installed
-  - gpu 환경 완비 후에 적용시도
 
 **📍 arima_predict.py**
   - arima 통계기반 모델로 filtered value 다음값 예측
@@ -45,5 +53,3 @@
   - 분석에 사용한 데이터 : 1024_sensor7_3sigma.csv, sample_data.csv
   - 여러 MODEL을 사용한 결과 (시행착오)
   - KALMAN필터 중심의 시각화
- 
-+ AUTOENCODER, TRANSFORMER 파일도 업로드 필요
