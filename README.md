@@ -373,13 +373,6 @@ jupyter notebook final/data_analysis/modeling_visualization.ipynb
 
 ---
 
-## 📞 문의
-
-**프로젝트**: IoT 센서 기반 산업 설비 예지보전 시스템  
-**상태**: 🔄 지속적 개선 중
-
----
-
 ## 📄 라이선스
 
 MIT License - 자유롭게 사용, 수정, 배포 가능합니다.
