@@ -6,7 +6,7 @@
 
 ## 🎯 프로젝트 개요
 
-**J-system**은 산업용 설비에 장착된 IoT 센서에서 실시간으로 수집한 진동, 주파수, 전류 데이터를 분석하여 설비의 이상 상태를 조기에 감지하고 예방하는 예지보전 시스템입니다.
+산업용 설비에 장착된 IoT 센서에서 실시간으로 수집한 진동, 주파수, 전류 데이터 등을 분석하여 설비의 이상 상태를 조기에 감지하고 예방하는 예지보전 시스템이다.
 
 ### 핵심 기능
 - ✅ **실시간 센서 데이터 수집**: Modbus RTU 및 Snap7 프로토콜 지원
@@ -22,6 +22,7 @@
 ```
 J-system/
 ├── 📄 README.md                           # 프로젝트 소개
+├── 📄 제이시스템_예지보전시스템.pdf         # 최종 보고서
 ├── 📊 modeling_visualization.ipynb        # 모델링 시각화
 │
 ├── 🔧 frequency.py                        # PLC 기반 주파수/전류 데이터 수집
@@ -268,18 +269,6 @@ MODBUS_PORT=COM3
 MODBUS_SLAVE_ID=80
 ```
 
-### 실행
-```bash
-# PLC 데이터 수집
-python frequency.py
-
-# Modbus 센서 데이터 수집 (다른 터미널에서)
-python vibration.py
-
-# 분석 및 시각화 (Jupyter)
-jupyter notebook final/data_analysis/modeling_visualization.ipynb
-```
-
 ---
 
 ## 📊 주요 성과
@@ -321,64 +310,21 @@ jupyter notebook final/data_analysis/modeling_visualization.ipynb
 
 ## 📝 파일별 설명
 
-| 파일명 | 용도 | 상태 |
+| 파일명 | 용도 |
 |--------|------|------|
-| `frequency.py` | PLC 센서 수집 | ✅ 운영 중 |
-| `vibration.py` | Modbus 센서 수집 | ✅ 운영 중 |
-| `3sigma.py` | 실시간 이상탐지 | ✅ 최신 버전 |
-| `arima_predict.py` | ARIMA 예측 | ⚠️ v2와 병합 필요 |
-| `arima_predict-v2.py` | ARIMA v2 | 🔧 검증 필요 |
-| `LSTM_Modeling.ipynb` | 딥러닝 이상탐지 | 🔧 GPU 필요 |
-| `AutoEncoder_Modeling.ipynb` | AutoEncoder | 🔧 환경 설정 필요 |
+| `frequency.py` | PLC 센서 수집 |
+| `vibration.py` | Modbus 센서 수집 |
+| `3sigma.py` | 실시간 이상탐지 |
+| `arima_predict.py` | ARIMA 예측 |
+| `arima_predict-v2.py` | ARIMA v2 |
+| `LSTM_Modeling.ipynb` | 딥러닝 이상탐지 |
+| `AutoEncoder_Modeling.ipynb` | AutoEncoder |
+| `제이시스템_예지보전시스템.pdf` | IoT 예지보전 시스템 최종 보고서 |
 
 ---
 
-## 🎓 학습 포인트
+## 보고서
 
-이 프로젝트를 통해 다음 기술을 습득할 수 있습니다:
-
-1. **IoT 통신 프로토콜**
-   - Modbus RTU, Snap7 (PLC 통신)
-   - 센서 데이터 수집 및 변환
-
-2. **신호 처리**
-   - FFT/IFFT (주파수 분석)
-   - Kalman 필터 (동적 추적)
-   - 통계 기반 필터링
-
-3. **시계열 분석**
-   - ARIMA 모델
-   - 동적 상한/하한선 계산
-   - 이상치 탐지 알고리즘
-
-4. **딥러닝**
-   - LSTM (Recurrent Neural Network)
-   - AutoEncoder (비지도학습)
-   - 시계열 예측
-
-5. **데이터 엔지니어링**
-   - PostgreSQL + Redis (고속 데이터 파이프라인)
-   - 배치 처리 vs 스트림 처리
-
----
-
-## 📈 향후 개선 사항
-
-- [ ] ARIMA v2 검증 및 메인 버전 통합
-- [ ] 실시간 웹 대시보드 (Flask/Streamlit)
-- [ ] LSTM/AutoEncoder 모델 GPU 최적화
-- [ ] 센서 고장 예측 모델 추가
-- [ ] 알림 시스템 (이메일/SMS/Slack)
-- [ ] 예측 모델 자동 재학습 파이프라인
-
----
-
-## 📄 라이선스
-
-MIT License - 자유롭게 사용, 수정, 배포 가능합니다.
-
----
-
-**Last Updated**: 2026-05-30  
-**Version**: 1.0.0
-
+| 파일 | 설명 |
+| --- | --- |
+| `제이시스템_예지보전시스템.pdf` | 제이시스템 IoT 예지보전 시스템 최종 보고서 (센서 수집, 신호 처리, 이상탐지, 실험 결과 정리) |
