@@ -1,103 +1,213 @@
+"""
+Modbus 센서 데이터 수집 및 처리 모듈
+
+이 모듈은 Modbus RTU 프로토콜을 사용하여 센서에서 
+가속도(Acceleration), 각속도(Angular Velocity), 진동 속도(Vibration Speed) 데이터를 
+실시간으로 수집하고, FFT 필터를 적용하여 전처리한 후
+PostgreSQL 데이터베이스와 Redis에 저장합니다.
+
+Features:
+    - Modbus RTU 센서 통신
+    - FFT 필터를 통한 노이즈 제거
+    - 동적 상한/하한선 계산 (통계 기반)
+    - 이상치 탐지 (3-sigma)
+    - PostgreSQL 배치 저장
+    - Redis Stream 실시간 데이터 저장
+
+Requirements:
+    - minimalmodbus
+    - psycopg2
+    - redis
+    - numpy
+"""
+
 import minimalmodbus
 import serial
 from time import sleep
-import psycopg2
-import numpy as np
-from collections import deque
-import redis
 from datetime import datetime
-import datetime
-import time  # 이 줄을 코드 상단에 추가하세요.
+import time
+from collections import deque
+
+import psycopg2
 from psycopg2.extras import execute_values
+import numpy as np
+import redis
+import os
+from dotenv import load_dotenv
 
+# 환경 변수 로드
+load_dotenv()
 
-# PostgreSQL 연결 설정
-conn = psycopg2.connect(
-    host='localhost',
-    dbname='postgres',
-    user='postgres',
-    password='1234',
-    port=5432
-)
-cur = conn.cursor()
-
-port = 'COM3'
-slave_id = 80
-
-# Redis에 연결
-client = redis.from_url('redis://localhost')
-stream_name = 'sensorDataStream'
-count = 0
-
-
-# 데이터 저장을 위한 큐
-data_queues = {
-    'x_acc': deque(maxlen=100),  # 가속도 x축
-    'y_acc': deque(maxlen=100),  # 가속도 y축
-    'z_acc': deque(maxlen=100),  # 가속도 z축
-    'filtered_x_acc': deque(maxlen=100),  # 가속도 x축
-    'filtered_y_acc': deque(maxlen=100),  # 가속도 y축
-    'filtered_z_acc': deque(maxlen=100),  # 가속도 z축
-    
-    'x_ang_vel': deque(maxlen=100),  # 각속도 x축
-    'y_ang_vel': deque(maxlen=100),  # 각속도 y축
-    'z_ang_vel': deque(maxlen=100),  # 각속도 z축
-    'filtered_x_ang_vel': deque(maxlen=100),  # 각속도 x축
-    'filtered_y_ang_vel': deque(maxlen=100),  # 각속도 y축
-    'filtered_z_ang_vel': deque(maxlen=100),  # 각속도 z축
-    
-    'x_vib_sp': deque(maxlen=100),  # 진동 속도 x축
-    'y_vib_sp': deque(maxlen=100),  # 진동 속도 y축
-    'z_vib_sp': deque(maxlen=100),   # 진동 속도 z축
-    'filtered_x_vib_sp': deque(maxlen=100),  # 진동 속도 x축
-    'filtered_y_vib_sp': deque(maxlen=100),  # 진동 속도 y축
-    'filtered_z_vib_sp': deque(maxlen=100),   # 진동 속도 z축
-
+# 데이터베이스 연결 설정
+DB_CONFIG = {
+    "host": os.getenv("DB_HOST", "localhost"),
+    "dbname": os.getenv("DB_NAME", "postgres"),
+    "user": os.getenv("DB_USER", "postgres"),
+    "password": os.getenv("DB_PASSWORD", "1234"),
+    "port": int(os.getenv("DB_PORT", "5432"))
 }
 
-def get_acceleration(x_axis_acc_register, y_axis_acc_register, z_axis_acc_register):
+# Modbus 포트 설정
+MODBUS_PORT = os.getenv("MODBUS_PORT", "COM3")
+MODBUS_SLAVE_ID = int(os.getenv("MODBUS_SLAVE_ID", "80"))
+
+# Redis 설정
+REDIS_URL = os.getenv("REDIS_URL", "redis://localhost")
+REDIS_STREAM_NAME = os.getenv("REDIS_STREAM_NAME", "sensorDataStream")
+
+try:
+    conn = psycopg2.connect(**DB_CONFIG)
+    cur = conn.cursor()
+    print("✓ PostgreSQL 데이터베이스 연결 성공")
+except Exception as e:
+    print(f"✗ 데이터베이스 연결 실패: {e}")
+
+try:
+    client = redis.from_url(REDIS_URL)
+    print("✓ Redis 연결 성공")
+except Exception as e:
+    print(f"✗ Redis 연결 실패: {e}")
+
+
+
+
+# 센서 데이터 저장 큐 (시계열 필터링용)
+DATA_QUEUES = {
+    # 가속도 (m/s²)
+    'x_acc': deque(maxlen=100),
+    'y_acc': deque(maxlen=100),
+    'z_acc': deque(maxlen=100),
+    'filtered_x_acc': deque(maxlen=100),
+    'filtered_y_acc': deque(maxlen=100),
+    'filtered_z_acc': deque(maxlen=100),
+    
+    # 각속도 (deg/s)
+    'x_ang_vel': deque(maxlen=100),
+    'y_ang_vel': deque(maxlen=100),
+    'z_ang_vel': deque(maxlen=100),
+    'filtered_x_ang_vel': deque(maxlen=100),
+    'filtered_y_ang_vel': deque(maxlen=100),
+    'filtered_z_ang_vel': deque(maxlen=100),
+    
+    # 진동 속도 (mm/s)
+    'x_vib_sp': deque(maxlen=100),
+    'y_vib_sp': deque(maxlen=100),
+    'z_vib_sp': deque(maxlen=100),
+    'filtered_x_vib_sp': deque(maxlen=100),
+    'filtered_y_vib_sp': deque(maxlen=100),
+    'filtered_z_vib_sp': deque(maxlen=100),
+}
+
+# Sensor ID 매핑
+SENSOR_IDS = {
+    'x_acc': 7, 'y_acc': 8, 'z_acc': 9,
+    'x_ang_vel': 10, 'y_ang_vel': 11, 'z_ang_vel': 12,
+    'x_vib_sp': 13, 'y_vib_sp': 14, 'z_vib_sp': 15
+}
+
+
+# ============================================================================
+# 센서 데이터 변환 함수
+# ============================================================================
+
+def get_acceleration(x_register, y_register, z_register):
+    """
+    Modbus 레지스터 값을 가속도로 변환 (m/s²)
+    
+    Args:
+        x_register, y_register, z_register: Modbus 레지스터 값
+    
+    Returns:
+        dict: {'x_axis': float, 'y_axis': float, 'z_axis': float}
+    """
     scale_factor = 9.8 / 32768
     return {
-        "x_axis": x_axis_acc_register * scale_factor,
-        "y_axis": y_axis_acc_register * scale_factor,
-        "z_axis": z_axis_acc_register * scale_factor
+        "x_axis": x_register * scale_factor,
+        "y_axis": y_register * scale_factor,
+        "z_axis": z_register * scale_factor
     }
 
-def get_angular_velocity(x_ang_vel_register, y_ang_vel_register, z_ang_vel_register):
+
+def get_angular_velocity(x_register, y_register, z_register):
+    """
+    Modbus 레지스터 값을 각속도로 변환 (deg/s)
+    
+    Args:
+        x_register, y_register, z_register: Modbus 레지스터 값
+    
+    Returns:
+        dict: {'x_axis': float, 'y_axis': float, 'z_axis': float}
+    """
     return {
-        "x_axis": x_ang_vel_register / 32768 * 2000,
-        "y_axis": y_ang_vel_register / 32768 * 2000,
-        "z_axis": z_ang_vel_register / 32768 * 2000
+        "x_axis": x_register / 32768 * 2000,
+        "y_axis": y_register / 32768 * 2000,
+        "z_axis": z_register / 32768 * 2000
     }
+
 
 def split_word(number):
+    """16-bit 데이터를 High/Low byte로 분리"""
     return {
         "high": (number >> 8) & 0xFF,
         "low": number & 0xFF
     }
 
-def get_vibration_speed(x_vib_sp_register, y_vib_sp_register, z_vib_sp_register):
-    x_byte_dict = split_word(x_vib_sp_register)
-    y_byte_dict = split_word(y_vib_sp_register)
-    z_byte_dict = split_word(z_vib_sp_register)
+
+def get_vibration_speed(x_register, y_register, z_register):
+    """
+    Modbus 레지스터 값을 진동 속도로 변환 (mm/s)
+    
+    Args:
+        x_register, y_register, z_register: Modbus 레지스터 값
+    
+    Returns:
+        dict: {'x_axis': int, 'y_axis': int, 'z_axis': int}
+    """
+    x_bytes = split_word(x_register)
+    y_bytes = split_word(y_register)
+    z_bytes = split_word(z_register)
     
     return {
-        "x_axis": int((x_byte_dict["high"] << 8) | x_byte_dict["low"]),
-        "y_axis": int((y_byte_dict["high"] << 8) | y_byte_dict["low"]),
-        "z_axis": int((z_byte_dict["high"] << 8) | z_byte_dict["low"]),
+        "x_axis": int((x_bytes["high"] << 8) | x_bytes["low"]),
+        "y_axis": int((y_bytes["high"] << 8) | y_bytes["low"]),
+        "z_axis": int((z_bytes["high"] << 8) | z_bytes["low"]),
     }
 
+
+# ============================================================================
+# 신호 처리 함수
+# ============================================================================
+
 def apply_fft_filter(data):
-    if len(data) < 2:  # 최소한 2개의 데이터가 필요
+    """
+    FFT 기반 고주파 필터링 (노이즈 제거)
+    
+    Args:
+        data: 시계열 데이터 (deque)
+    
+    Returns:
+        float: 필터링된 현재 값
+    """
+    if len(data) < 2:
         return data[-1] if data else 0
     
     fft_result = np.fft.fft(data)
-    fft_result[5:] = 0  # 고주파수 제거 (임의로 설정, 조정 가능)
+    fft_result[5:] = 0  # 5번째 이후 주파수 성분 제거
     filtered = np.fft.ifft(fft_result).real
-    return filtered[-1]  # 가장 최근 필터링된 값 반환
+    return filtered[-1]
 
 
 def calculate_limits_and_outlier_status(values):
+    """
+    시계열 데이터의 평균/표준편차를 기반으로 상한/하한선 계산
+    (동적 통계 기반 상한/하한선)
+    
+    Args:
+        values: 시계열 데이터 (deque)
+    
+    Returns:
+        tuple: (upper_limit, lower_limit)
+    """
     if len(values) < 2:
         mean = values[-1] if values else 0
         std = 0
@@ -109,215 +219,217 @@ def calculate_limits_and_outlier_status(values):
         mean = prev_mean + (values[-1] - prev_mean) / n
         std = np.sqrt(((n - 1) * (prev_std ** 2) + (values[-1] - prev_mean) * (values[-1] - mean)) / n)
     
-    upper_limit = mean + 4 * std  ## (기준치 조정) 표준편차 3-4 조정 가능
-    lower_limit = mean - 4 * std  ## (기준치 조정) 표준편차 3-4 조정 가능
+    # 표준편차의 4배를 상한/하한선으로 설정 (조정 가능)
+    upper_limit = mean + 4 * std
+    lower_limit = mean - 4 * std
     return float(upper_limit), float(lower_limit)
 
 
-def insert_vibration_data(sensor_id, current_time, value, filtered_value, upper_limit, lower_limit, outlier_status):
-    cur.execute("""
-        INSERT INTO public.vibration (sensor_id, "time", value, filtered_value, upper_limit, lower_limit, outlier_status)
-        VALUES (%s, %s, %s, %s, %s, %s, %s)
-    """, (sensor_id, current_time, value, filtered_value, upper_limit, lower_limit, outlier_status))
-    conn.commit()
+# ============================================================================
+# 데이터베이스 저장 함수
+# ============================================================================
 
-def bulk_insert_vibration_data(data_list):
-    query = "INSERT INTO public.vibration(sensor_id, time, value, filtered_value, upper_limit, lower_limit, outlier_status) VALUES %s"
-
+def insert_vibration_data(sensor_id, timestamp, value, filtered_value, upper_limit, lower_limit, outlier_status):
+    """개별 센서 데이터를 데이터베이스에 저장"""
     try:
-        with conn.cursor() as cur:
-            # execute_values를 사용하여 성능을 높이고 다중 레코드를 한 번에 삽입
-            execute_values(cur, query, data_list)
-            conn.commit()
-            print("Bulk insert completed successfully.")
+        cur.execute("""
+            INSERT INTO public.vibration 
+            (sensor_id, time, value, filtered_value, upper_limit, lower_limit, outlier_status)
+            VALUES (%s, %s, %s, %s, %s, %s, %s)
+        """, (sensor_id, timestamp, value, filtered_value, upper_limit, lower_limit, outlier_status))
+        conn.commit()
     except Exception as e:
         conn.rollback()
-        print(f"An error occurred: {e}")
-    finally:
-        conn.close()
+        print(f"데이터 저장 오류: {e}")
 
-def create_vibration_data_raw(sensor_id, time, axis_data, upper_limit, lower_limit, outlier_status, filtered_value):
-    return {
-        "sensorId": sensor_id,
-        "time": time,
-        "value": axis_data,
-        "upperLimit": upper_limit,
-        "lowerLimit": lower_limit,
-        "outlierStatus": outlier_status,
-        "filteredValue": filtered_value
-}
 
-def create_vibration_data(sensor_id, time, axis_data, upper_limit, lower_limit, outlier_status, filtered_value):
+def bulk_insert_vibration_data(data_list):
+    """배치 삽입으로 여러 센서 데이터를 한 번에 저장 (성능 최적화)"""
+    query = """
+        INSERT INTO public.vibration
+        (sensor_id, time, value, filtered_value, upper_limit, lower_limit, outlier_status) 
+        VALUES %s
+    """
+
+    try:
+        with conn.cursor() as cursor:
+            execute_values(cursor, query, data_list)
+            conn.commit()
+            print(f"✓ {len(data_list)}개 레코드 저장 완료")
+    except Exception as e:
+        conn.rollback()
+        print(f"✗ 배치 저장 오류: {e}")
+
+
+# ============================================================================
+# Redis 저장 함수
+# ============================================================================
+
+def save_to_redis(data_dict):
+    """Redis Stream에 단일 데이터 저장"""
+    try:
+        client.xadd(REDIS_STREAM_NAME, data_dict, maxlen="~1000")
+    except Exception as e:
+        print(f"Redis 저장 오류: {e}")
+
+
+def batch_save_to_redis(data_list):
+    """Redis Stream에 배치 데이터 저장"""
+    try:
+        pipeline = client.pipeline()
+        for data in data_list:
+            pipeline.xadd(REDIS_STREAM_NAME, data)
+        pipeline.execute()
+    except Exception as e:
+        print(f"Redis 배치 저장 오류: {e}")
+
+
+# ============================================================================
+# 데이터 변환 함수
+# ============================================================================
+
+def create_vibration_data(sensor_id, timestamp, value, upper_limit, lower_limit, outlier_status, filtered_value):
+    """
+    센서 데이터를 저장용 딕셔너리로 변환
+    
+    Args:
+        sensor_id: 센서 ID
+        timestamp: 데이터 타임스탐프
+        value: 측정값
+        upper_limit: 상한선
+        lower_limit: 하한선
+        outlier_status: 이상치 여부 (bool)
+        filtered_value: 필터링된 값
+    
+    Returns:
+        dict: 저장용 데이터 딕셔너리
+    """
     return {
-        "sensorId": sensor_id,
-        "time": str(time),
-        "value": axis_data,
-        "upperLimit": upper_limit,
-        "lowerLimit": lower_limit,
-        "outlierStatus": str(outlier_status),
-        "filteredValue": filtered_value
+        "sensor_id": str(sensor_id),
+        "time": str(timestamp),
+        "value": str(value),
+        "upper_limit": str(upper_limit),
+        "lower_limit": str(lower_limit),
+        "outlier_status": str(outlier_status),
+        "filtered_value": str(filtered_value)
     }
 
-def save_to_redis(client, stream_name, data):
-    client.xadd(stream_name, data, maxlen="~1000")
-    print(f"Saved data to Redis stream {stream_name}: {data}")
 
-def batch_save_to_redis(client, stream_name, data_list):
-    pipeline = client.pipeline()
-    
-    for data in data_list:
-        pipeline.xadd(stream_name, data)
-    
-    pipeline.execute()
 
+# ============================================================================
+# Modbus 센서 초기화
+# ============================================================================
+
+instrument = None
 try:
-    instrument = minimalmodbus.Instrument(port=port, slaveaddress=slave_id)
-    print("Device에 연결되었습니다.")
+    instrument = minimalmodbus.Instrument(port=MODBUS_PORT, slaveaddress=MODBUS_SLAVE_ID)
     instrument.serial.baudrate = 9600
     instrument.serial.bytesize = 8
     instrument.serial.parity = serial.PARITY_NONE
     instrument.serial.stopbits = 1
+    print(f"✓ Modbus 센서 연결 성공 ({MODBUS_PORT}, Slave ID: {MODBUS_SLAVE_ID})")
 except Exception as e:
-    print(f"{port}를 통한 연결 실패: {e}")
+    print(f"✗ Modbus 센서 연결 실패: {e}")
+
+
+# ============================================================================
+# 메인 데이터 수집 루프
+# ============================================================================
+
+def process_sensor_data():
+    """센서에서 데이터를 읽고 처리하여 저장"""
+    if instrument is None:
+        print("센서가 연결되지 않았습니다.")
+        return
+    
+    try:
+        current_time = datetime.now()
+        data_to_insert = []
+        redis_data_list = []
+
+        # 1. 가속도 데이터 읽기 및 처리
+        acc_data = [
+            instrument.read_register(52, 0, 3, True),
+            instrument.read_register(53, 0, 3, True),
+            instrument.read_register(54, 0, 3, True)
+        ]
+        axis_acc = get_acceleration(*acc_data)
+        
+        for axis, axis_name in [("x_axis", "x_acc"), ("y_axis", "y_acc"), ("z_axis", "z_acc")]:
+            DATA_QUEUES[axis_name].append(axis_acc[axis])
+            filtered_value = apply_fft_filter(DATA_QUEUES[axis_name])
+            DATA_QUEUES[f"filtered_{axis_name}"].append(filtered_value)
+            
+            upper_limit, lower_limit = calculate_limits_and_outlier_status(DATA_QUEUES[f"filtered_{axis_name}"])
+            outlier_status = not (lower_limit <= filtered_value <= upper_limit)
+            
+            sensor_id = SENSOR_IDS[axis_name]
+            data_to_insert.append((sensor_id, current_time, axis_acc[axis], filtered_value, upper_limit, lower_limit, outlier_status))
+            redis_data_list.append(create_vibration_data(sensor_id, current_time, axis_acc[axis], upper_limit, lower_limit, outlier_status, filtered_value))
+
+        # 2. 각속도 데이터 읽기 및 처리
+        ang_vel_data = [
+            instrument.read_register(55, 0, 3, True),
+            instrument.read_register(56, 0, 3, True),
+            instrument.read_register(57, 0, 3, True)
+        ]
+        ang_vel = get_angular_velocity(*ang_vel_data)
+        
+        for axis, axis_name in [("x_axis", "x_ang_vel"), ("y_axis", "y_ang_vel"), ("z_axis", "z_ang_vel")]:
+            DATA_QUEUES[axis_name].append(ang_vel[axis])
+            filtered_value = apply_fft_filter(DATA_QUEUES[axis_name])
+            DATA_QUEUES[f"filtered_{axis_name}"].append(filtered_value)
+            
+            upper_limit, lower_limit = calculate_limits_and_outlier_status(DATA_QUEUES[f"filtered_{axis_name}"])
+            outlier_status = not (lower_limit <= filtered_value <= upper_limit)
+            
+            sensor_id = SENSOR_IDS[axis_name]
+            data_to_insert.append((sensor_id, current_time, ang_vel[axis], filtered_value, upper_limit, lower_limit, outlier_status))
+            redis_data_list.append(create_vibration_data(sensor_id, current_time, ang_vel[axis], upper_limit, lower_limit, outlier_status, filtered_value))
+
+        # 3. 진동 속도 데이터 읽기 및 처리
+        vib_sp_data = [
+            instrument.read_register(58, 0, 3, True),
+            instrument.read_register(59, 0, 3, True),
+            instrument.read_register(60, 0, 3, True)
+        ]
+        vib_sp = get_vibration_speed(*vib_sp_data)
+        
+        for axis, axis_name in [("x_axis", "x_vib_sp"), ("y_axis", "y_vib_sp"), ("z_axis", "z_vib_sp")]:
+            DATA_QUEUES[axis_name].append(vib_sp[axis])
+            filtered_value = apply_fft_filter(DATA_QUEUES[axis_name])
+            DATA_QUEUES[f"filtered_{axis_name}"].append(filtered_value)
+            
+            upper_limit, lower_limit = calculate_limits_and_outlier_status(DATA_QUEUES[f"filtered_{axis_name}"])
+            outlier_status = not (lower_limit <= filtered_value <= upper_limit)
+            
+            sensor_id = SENSOR_IDS[axis_name]
+            data_to_insert.append((sensor_id, current_time, vib_sp[axis], filtered_value, upper_limit, lower_limit, outlier_status))
+            redis_data_list.append(create_vibration_data(sensor_id, current_time, vib_sp[axis], upper_limit, lower_limit, outlier_status, filtered_value))
+
+        # 데이터베이스 저장 (배치)
+        bulk_insert_vibration_data(data_to_insert)
+        
+        # Redis 저장 (스트림)
+        batch_save_to_redis(redis_data_list)
+        
+        print(f"[{current_time.strftime('%H:%M:%S')}] ✓ 센서 데이터 처리 완료")
+
+    except Exception as e:
+        print(f"센서 데이터 처리 오류: {e}")
 
 
 if __name__ == "__main__":
-    while True:
-        try:
-            # 현재 시간 한 번만 호출
-            current_time = datetime.datetime.now()
-
-            # 가속도 데이터 읽기
-            acc_data = [
-                instrument.read_register(52, 0, 3, True),
-                instrument.read_register(53, 0, 3, True),
-                instrument.read_register(54, 0, 3, True)
-            ]
-            axis_acc = get_acceleration(*acc_data)
-
-            # 각속도 데이터 읽기
-            ang_vel_data = [
-                instrument.read_register(55, 0, 3, True),
-                instrument.read_register(56, 0, 3, True),
-                instrument.read_register(57, 0, 3, True)
-            ]
-            ang_vel = get_angular_velocity(*ang_vel_data)
-
-            # 진동 속도 데이터 읽기
-            vib_sp_data = [
-                instrument.read_register(58, 0, 3, True),
-                instrument.read_register(59, 0, 3, True),
-                instrument.read_register(60, 0, 3, True)
-            ]
-            vib_sp = get_vibration_speed(*vib_sp_data)
-
-            # 필터 적용 및 이상치 상태 계산
-            data_queues['x_acc'].append(axis_acc["x_axis"])
-            filtered_x_acc = apply_fft_filter(data_queues['x_acc'])
-            data_queues['filtered_x_acc'].append(filtered_x_acc)  # 필터링된 값 저장
-            upper_limit_x, lower_limit_x = calculate_limits_and_outlier_status(data_queues['filtered_x_acc'])
-            outlier_status_x = not (lower_limit_x <= filtered_x_acc <= upper_limit_x)
-            
-            data_queues['y_acc'].append(axis_acc["y_axis"])
-            filtered_y_acc = apply_fft_filter(data_queues['y_acc'])
-            data_queues['filtered_y_acc'].append(filtered_y_acc)  # 필터링된 값 저장
-            upper_limit_y, lower_limit_y = calculate_limits_and_outlier_status(data_queues['filtered_y_acc'])
-            outlier_status_y = not (lower_limit_y <= filtered_y_acc <= upper_limit_y)
-            
-            data_queues['z_acc'].append(axis_acc["z_axis"])
-            filtered_z_acc = apply_fft_filter(data_queues['z_acc'])
-            data_queues['filtered_z_acc'].append(filtered_z_acc)  # 필터링된 값 저장
-            upper_limit_z, lower_limit_z = calculate_limits_and_outlier_status(data_queues['filtered_z_acc'])
-            outlier_status_z = not (lower_limit_z <= filtered_z_acc <= upper_limit_z)
-
-            # 각속도 필터링 및 이상치 상태 계산
-            data_queues['x_ang_vel'].append(ang_vel["x_axis"])
-            filtered_x_ang_vel = apply_fft_filter(data_queues['x_ang_vel'])
-            data_queues['filtered_x_ang_vel'].append(filtered_x_ang_vel)  # 필터링된 데이터 저장
-            upper_limit_ang_x, lower_limit_ang_x = calculate_limits_and_outlier_status(data_queues['filtered_x_ang_vel'])
-            outlier_status_ang_x = not (lower_limit_ang_x <= filtered_x_ang_vel <= upper_limit_ang_x)
-            
-            data_queues['y_ang_vel'].append(ang_vel["y_axis"])
-            filtered_y_ang_vel = apply_fft_filter(data_queues['y_ang_vel'])
-            data_queues['filtered_y_ang_vel'].append(filtered_y_ang_vel)  # 필터링된 데이터 저장
-            upper_limit_ang_y, lower_limit_ang_y = calculate_limits_and_outlier_status(data_queues['filtered_y_ang_vel'])
-            outlier_status_ang_y = not (lower_limit_ang_y <= filtered_y_ang_vel <= upper_limit_ang_y)
-            
-            data_queues['z_ang_vel'].append(ang_vel["z_axis"])
-            filtered_z_ang_vel = apply_fft_filter(data_queues['z_ang_vel'])
-            data_queues['filtered_z_ang_vel'].append(filtered_z_ang_vel)  # 필터링된 데이터 저장
-            upper_limit_ang_z, lower_limit_ang_z = calculate_limits_and_outlier_status(data_queues['filtered_z_ang_vel'])
-            outlier_status_ang_z = not (lower_limit_ang_z <= filtered_z_ang_vel <= upper_limit_ang_z)
-            
-            # 진동 속도 필터링 및 이상치 상태 계산
-            data_queues['x_vib_sp'].append(vib_sp["x_axis"])
-            filtered_x_vib_sp = apply_fft_filter(data_queues['x_vib_sp'])
-            data_queues['filtered_x_vib_sp'].append(filtered_x_vib_sp)  # 필터링된 데이터 저장
-            upper_limit_vib_x, lower_limit_vib_x = calculate_limits_and_outlier_status(data_queues['filtered_x_vib_sp'])
-            outlier_status_vib_x = not (lower_limit_vib_x <= filtered_x_vib_sp <= upper_limit_vib_x)
-            
-            data_queues['y_vib_sp'].append(vib_sp["y_axis"])
-            filtered_y_vib_sp = apply_fft_filter(data_queues['y_vib_sp'])
-            data_queues['filtered_y_vib_sp'].append(filtered_y_vib_sp)  # 필터링된 데이터 저장
-            upper_limit_vib_y, lower_limit_vib_y = calculate_limits_and_outlier_status(data_queues['filtered_y_vib_sp'])
-            outlier_status_vib_y = not (lower_limit_vib_y <= filtered_y_vib_sp <= upper_limit_vib_y)
-            
-            data_queues['z_vib_sp'].append(vib_sp["z_axis"])
-            filtered_z_vib_sp = apply_fft_filter(data_queues['z_vib_sp'])
-            data_queues['filtered_z_vib_sp'].append(filtered_z_vib_sp)  # 필터링된 데이터 저장
-            upper_limit_vib_z, lower_limit_vib_z = calculate_limits_and_outlier_status(data_queues['filtered_z_vib_sp'])
-            outlier_status_vib_z = not (lower_limit_vib_z <= filtered_z_vib_sp <= upper_limit_vib_z)
-
-            # 데이터베이스에 진동 데이터 저장
-            # insert_vibration_data(7, current_time, axis_acc["x_axis"], filtered_x_acc, upper_limit_x, lower_limit_x, outlier_status_x)
-            # insert_vibration_data(8, current_time, axis_acc["y_axis"], filtered_y_acc, upper_limit_y, lower_limit_y, outlier_status_y)
-            # insert_vibration_data(9, current_time, axis_acc["z_axis"], filtered_z_acc, upper_limit_z, lower_limit_z, outlier_status_z)
-            
-            # insert_vibration_data(10, current_time, ang_vel["x_axis"], filtered_x_ang_vel, upper_limit_ang_x, lower_limit_ang_x, outlier_status_ang_x)
-            # insert_vibration_data(11, current_time, ang_vel["y_axis"], filtered_y_ang_vel, upper_limit_ang_y, lower_limit_ang_y, outlier_status_ang_y)
-            # insert_vibration_data(12, current_time, ang_vel["z_axis"], filtered_z_ang_vel, upper_limit_ang_z, lower_limit_ang_z, outlier_status_ang_z)
-
-            # insert_vibration_data(13, current_time, vib_sp["x_axis"], filtered_x_vib_sp, upper_limit_vib_x, lower_limit_vib_x, outlier_status_vib_x)
-            # insert_vibration_data(14, current_time, vib_sp["y_axis"], filtered_y_vib_sp, upper_limit_vib_y, lower_limit_vib_y, outlier_status_vib_y)
-            # insert_vibration_data(15, current_time, vib_sp["z_axis"], filtered_z_vib_sp, upper_limit_vib_z, lower_limit_vib_z, outlier_status_vib_z)
-
-            
-            # 리스트에 데이터 추가
-            raw_vibration_data_list = [
-                create_vibration_data_raw(7, current_time, axis_acc["x_axis"], upper_limit_x, lower_limit_x, outlier_status_x, filtered_x_acc),
-                create_vibration_data_raw(8, current_time, axis_acc["y_axis"], upper_limit_y, lower_limit_y, outlier_status_y, filtered_y_acc),
-                create_vibration_data_raw(9, current_time, axis_acc["z_axis"], upper_limit_z, lower_limit_z, outlier_status_z, filtered_z_acc),
-                
-                create_vibration_data_raw(10, current_time, ang_vel["x_axis"], upper_limit_ang_x, lower_limit_ang_x, outlier_status_ang_x, filtered_x_ang_vel),
-                create_vibration_data_raw(11, current_time, ang_vel["y_axis"], upper_limit_ang_y, lower_limit_ang_y, outlier_status_ang_y, filtered_y_ang_vel),
-                create_vibration_data_raw(12, current_time, ang_vel["z_axis"], upper_limit_ang_z, lower_limit_ang_z, outlier_status_ang_z, filtered_z_ang_vel),
-                
-                create_vibration_data_raw(13, current_time, vib_sp["x_axis"], upper_limit_vib_x, lower_limit_vib_x, outlier_status_vib_x, filtered_x_vib_sp),
-                create_vibration_data_raw(14, current_time, vib_sp["y_axis"], upper_limit_vib_y, lower_limit_vib_y, outlier_status_vib_y, filtered_y_vib_sp),
-                create_vibration_data_raw(15, current_time, vib_sp["z_axis"], upper_limit_vib_z, lower_limit_vib_z, outlier_status_vib_z, filtered_z_vib_sp)
-            ]
-
-            # 데이터베이스에 진동 데이터 저장
-            bulk_insert_vibration_data(raw_vibration_data_list)
-            
-            # 리스트에 데이터 추가
-            vibration_data_list = [
-                create_vibration_data(7, current_time, axis_acc["x_axis"], upper_limit_x, lower_limit_x, outlier_status_x, filtered_x_acc),
-                create_vibration_data(8, current_time, axis_acc["y_axis"], upper_limit_y, lower_limit_y, outlier_status_y, filtered_y_acc),
-                create_vibration_data(9, current_time, axis_acc["z_axis"], upper_limit_z, lower_limit_z, outlier_status_z, filtered_z_acc),
-                
-                create_vibration_data(10, current_time, ang_vel["x_axis"], upper_limit_ang_x, lower_limit_ang_x, outlier_status_ang_x, filtered_x_ang_vel),
-                create_vibration_data(11, current_time, ang_vel["y_axis"], upper_limit_ang_y, lower_limit_ang_y, outlier_status_ang_y, filtered_y_ang_vel),
-                create_vibration_data(12, current_time, ang_vel["z_axis"], upper_limit_ang_z, lower_limit_ang_z, outlier_status_ang_z, filtered_z_ang_vel),
-                
-                create_vibration_data(13, current_time, vib_sp["x_axis"], upper_limit_vib_x, lower_limit_vib_x, outlier_status_vib_x, filtered_x_vib_sp),
-                create_vibration_data(14, current_time, vib_sp["y_axis"], upper_limit_vib_y, lower_limit_vib_y, outlier_status_vib_y, filtered_y_vib_sp),
-                create_vibration_data(15, current_time, vib_sp["z_axis"], upper_limit_vib_z, lower_limit_vib_z, outlier_status_vib_z, filtered_z_vib_sp)
-            ]
-            
-            # Redis에 진동 데이터 저장
-            batch_save_to_redis(client, stream_name, vibration_data_list)
-
-            time.sleep(0.5)
-        except Exception as e:
-            print(f"Error: {e}")
+    print("\n" + "="*50)
+    print("센서 데이터 수집 시스템 시작")
+    print("="*50 + "\n")
+    
+    try:
+        while True:
+            process_sensor_data()
+            time.sleep(0.5)  # 0.5초 간격으로 데이터 수집
+    except KeyboardInterrupt:
+        print("\n\n프로그램 중단")
+        if conn:
+            conn.close()
+        print("✓ 데이터베이스 연결 종료")
